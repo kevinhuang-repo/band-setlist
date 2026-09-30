@@ -68,6 +68,7 @@
   .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
   .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
   .pill.bad { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.sync::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: 1px; }
 
   main {
     max-width: 1280px;
@@ -291,7 +292,7 @@
 <header>
   <h1>樂團排歌單<small>把卡片拖進上下半場；每個半場 1 首開場＋8–10 首，最後安可 1–2 首</small></h1>
   <div class="actions">
-    <button class="primary" id="btn-share">複製分享連結</button>
+    <button class="primary" id="btn-share">複製網址</button>
     <button id="btn-text">複製歌單文字</button>
     <button id="btn-reset">全部放回歌曲庫</button>
   </div>
@@ -325,7 +326,7 @@
   </section>
 </main>
 
-<p class="hint">順序、新增和刪除的歌都存在網址裡：改完按「複製分享連結」丟到群組，別人打開就是你這個版本，改完再傳回來就好。手機上長按卡片再拖曳，或點 ⋯ 直接選要放哪裡。</p>
+<p class="hint">大家共用同一份歌單：有人拖曳、新增或刪除，其他開著這一頁的人會馬上看到，不用再傳連結。手機上長按卡片再拖曳，或點 ⋯ 直接選要放哪裡。</p>
 
 <dialog id="add-dialog">
   <h3>新增歌曲</h3>
@@ -351,7 +352,7 @@
 <dialog id="del-dialog">
   <h3>刪除歌曲</h3>
   <p>確定要把「<b id="del-name"></b>」從歌曲庫刪掉嗎？</p>
-  <p class="muted">刪掉之後，你分享出去的新連結裡就不會有這首歌。</p>
+  <p class="muted">刪掉之後，所有團員的歌曲庫都會少這首歌。</p>
   <div class="dlg-actions">
     <button type="button" id="del-cancel" autofocus>取消</button>
     <button type="button" class="danger" id="del-ok">刪除</button>
@@ -361,8 +362,16 @@
 <div class="toast" id="toast"><span id="toast-msg"></span><button type="button" id="toast-act" hidden></button></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
 <script>
-// ===== 內建歌曲清單：id 不要重複、不要改舊的 id（網頁上新增的歌會存在網址裡，不用改這裡）=====
+// ===== 共用歌單存在 Firebase Realtime Database 的 /setlist =====
+const FIREBASE = {
+  databaseURL: "https://band-setlist-11b7c-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "band-setlist-11b7c",
+};
+
+// ===== 內建歌曲清單：id 不要重複、不要改舊的 id（網頁上新增的歌會存在資料庫裡，不用改這裡）=====
 const BASE_SONGS = [
   { id: 1,  title: "I'll Stick Around",         artist: "Foo Fighters" },
   { id: 2,  title: "All My Life",               artist: "Foo Fighters" },
@@ -408,7 +417,7 @@ function artistColor(artist) {
 
 const $ = id => document.getElementById(id);
 const LISTS = ["pool", "o1", "s1", "o2", "s2", "e"];
-const SET_KEYS = ["o1", "s1", "o2", "s2", "e"];   // 會編進網址的清單
+const SET_KEYS = ["o1", "s1", "o2", "s2", "e"];   // 會編進存檔字串的清單
 const STORE_KEY = "band-setlist-v1";
 
 // ---------- state ----------
@@ -483,9 +492,11 @@ function decode(str) {
   return raw;
 }
 
+// 舊版分享連結把歌單編在網址 # 後面；現在只在第一次同步時拿來問要不要套用
+const legacy = decode(location.hash.slice(1));
+
 function load() {
-  const fromHash = decode(location.hash.slice(1));
-  if (fromHash) return normalize(fromHash);
+  if (legacy) return normalize(legacy);
   try {
     const saved = localStorage.getItem(STORE_KEY);
     if (saved) { const r = decode(saved); if (r) return normalize(r); }
@@ -495,16 +506,77 @@ function load() {
 
 state = load();
 
+// 本機只留一份備份，連線前先有畫面可看；真正的歌單以資料庫為準
 function save() {
-  const q = encode(state);
-  history.replaceState(null, "", q ? "#" + q : location.pathname + location.search);
-  try { localStorage.setItem(STORE_KEY, q); } catch (e) {}
+  try { localStorage.setItem(STORE_KEY, encode(state)); } catch (e) {}
 }
 
 function update(next) {
   state = normalize(next);
   save();
   render();
+  push();
+}
+
+// ---------- 即時同步 ----------
+const CLIENT = Math.random().toString(36).slice(2, 10);
+let ref = null, synced = false, remoteQ = null, syncState = "wait";
+let dragging = false, pendingRemote = null;
+
+function setSync(s) { syncState = s; renderStatus(); }
+
+// 第一次同步完成前不寫入，避免用本機舊資料蓋掉大家的歌單
+function push() {
+  if (!ref || !synced) return;
+  const q = encode(state);
+  if (q === remoteQ) return;
+  remoteQ = q;
+  ref.set({ q, t: firebase.database.ServerValue.TIMESTAMP, by: CLIENT })
+    .catch(() => toast("存不上去，請重新整理再試一次"));
+}
+
+function applyRemote(q) {
+  const next = normalize(decode(q) || {});
+  if (dragging) { pendingRemote = next; return; }   // 拖到一半先不重畫，放手時再合併
+  if (encode(next) === encode(state)) return;
+  state = next;
+  save();
+  closeMenu();
+  render();
+}
+
+function startSync() {
+  try {
+    firebase.initializeApp(FIREBASE);
+    const db = firebase.database();
+    ref = db.ref("setlist");
+    db.ref(".info/connected").on("value", s => {
+      if (synced) setSync(s.val() ? "ok" : "off");
+    });
+    ref.on("value", snap => {
+      const v = snap.val();
+      const first = !synced;
+      synced = true;
+      setSync("ok");
+      if (!v || typeof v.q !== "string") {
+        // 資料庫還是空的：用這台的歌單當起點
+        remoteQ = null;
+        push();
+      } else {
+        remoteQ = v.q;
+        const differs = encode(state) !== encode(normalize(decode(v.q) || {}));
+        if (first && legacy && differs &&
+            confirm("這個連結帶著一份舊版歌單。\n要用它取代大家共用的歌單嗎？\n按「取消」會顯示目前共用的版本。")) {
+          push();
+        } else {
+          applyRemote(v.q);
+        }
+      }
+      if (first && location.hash) history.replaceState(null, "", location.pathname + location.search);
+    }, () => setSync("off"));
+  } catch (e) {
+    setSync("off");
+  }
 }
 
 // ---------- render ----------
@@ -557,7 +629,11 @@ function renderStatus() {
     el.textContent = `開場 ${state["o" + n].length}/1・曲目 ${c}/${SET_MIN}–${SET_MAX}`;
     el.className = "count " + (halfOk(n) ? "ok" : (c > SET_MAX ? "bad" : ""));
   }
-  const pills = [];
+  const pills = [{
+    wait: `<span class="pill sync">連線中…</span>`,
+    ok: `<span class="pill sync ok">已同步</span>`,
+    off: `<span class="pill sync bad">離線中，連上後才會同步</span>`,
+  }[syncState]];
   for (const n of [1, 2]) {
     const name = n === 1 ? "上半場" : "下半場";
     const c = state["s" + n].length;
@@ -612,7 +688,21 @@ for (const k of LISTS) {
       const old = [...evt.to.children].find(c => c !== evt.item);
       if (old) evt.from.insertBefore(old, evt.from.children[evt.oldIndex] || null);
     } : undefined,
-    onEnd: () => update(readDom()),
+    onStart: () => { dragging = true; },
+    onEnd: evt => {
+      dragging = false;
+      if (!pendingRemote) return update(readDom());
+      // 拖曳途中別人改過歌單：把這一次移動套到最新版本上，不蓋掉別人的改動
+      const st = structuredClone(pendingRemote);
+      pendingRemote = null;
+      const id = Number(evt.item.dataset.id), to = evt.to.id;
+      if (catalog(st).some(s => s.id === id)) {
+        for (const l of LISTS) st[l] = st[l].filter(x => x !== id);
+        if (to.startsWith("o") && st[to].length) st.pool.push(st[to].pop());
+        st[to].splice(Math.min(evt.newIndex, st[to].length), 0, id);
+      }
+      update(st);
+    },
   });
 }
 
@@ -688,15 +778,21 @@ $("del-cancel").addEventListener("click", () => $("del-dialog").close());
 $("del-ok").addEventListener("click", () => {
   $("del-dialog").close();
   const id = pendingDelete;
-  if (id == null) return;
+  if (id == null || where(id) !== "pool") return;   // 等確認的時候被別人移走或刪掉了
   const s = song(id);
-  const prev = structuredClone(state);
   const st = structuredClone(state);
   st.pool = st.pool.filter(x => x !== id);
   if (id < CUSTOM_ID_START) st.deleted.push(id);
   else st.custom = st.custom.filter(c => c.id !== id);
   update(st);
-  toast(`已刪除「${s.title}」`, "復原", () => { update(prev); flash(id); });
+  toast(`已刪除「${s.title}」`, "復原", () => {
+    // 只把這首歌加回最新的歌單，不還原整份（別人這幾秒的改動要留著）
+    const cur = structuredClone(state);
+    if (id < CUSTOM_ID_START) cur.deleted = cur.deleted.filter(x => x !== id);
+    else if (!cur.custom.some(c => c.id === id)) cur.custom.push(s);
+    update(cur);
+    flash(id);
+  });
 });
 
 // ---------- 新增歌曲 ----------
@@ -899,16 +995,17 @@ function setlistText() {
   return lines.join("\n").trim();
 }
 
-$("btn-share").addEventListener("click", () => copy(location.href, "連結已複製，貼到群組就好"));
+$("btn-share").addEventListener("click", () => copy(location.origin + location.pathname, "網址已複製，貼到群組就好"));
 $("btn-text").addEventListener("click", () => copy(setlistText(), "歌單文字已複製"));
 $("btn-reset").addEventListener("click", () => {
   if (!confirm("確定把所有歌放回歌曲庫？（新增的歌會保留）")) return;
   update({ custom: state.custom, deleted: state.deleted });
 });
-window.addEventListener("hashchange", () => { state = load(); save(); render(); });
+// 頁面開著時又貼了舊版分享連結：重新載入，走一次「要不要套用」的流程
+window.addEventListener("hashchange", () => { if (decode(location.hash.slice(1))) location.reload(); });
 
-save();
 render();
+startSync();
 </script>
 </body>
 </html>
