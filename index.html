@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>樂團排歌單</title>
+<style>
+  :root {
+    --bg: #111214;
+    --panel: #1a1c20;
+    --card: #24272d;
+    --card-hover: #2c3037;
+    --line: #33373e;
+    --text: #eceef1;
+    --muted: #9097a1;
+    --accent: #f5b83d;
+    --ok: #4cc38a;
+    --warn: #f07a5a;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.4;
+  }
+  header {
+    padding: 20px 16px 12px;
+    max-width: 1280px;
+    margin: 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+  }
+  h1 { font-size: 22px; margin: 0; letter-spacing: .02em; }
+  h1 small { display: block; font-size: 13px; color: var(--muted); font-weight: 400; margin-top: 4px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    font: inherit;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--card-hover); }
+  button.primary { background: var(--accent); color: #1a1406; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+
+  .status {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 16px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.bad { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+
+  main {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 16px 40px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+  }
+  .col {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    min-width: 0;
+  }
+  .col h2 {
+    font-size: 17px;
+    margin: 0 0 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .count { font-size: 13px; font-weight: 400; color: var(--muted); }
+  .count.ok { color: var(--ok); }
+  .count.bad { color: var(--warn); }
+  .label {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin: 12px 0 6px;
+  }
+  .label:first-of-type { margin-top: 0; }
+
+  .list { min-height: 56px; display: flex; flex-direction: column; gap: 6px; border-radius: var(--radius); }
+  .list:empty::after {
+    content: attr(data-empty);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 56px;
+    border: 1.5px dashed var(--line);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 8px;
+  }
+  .list.opener { min-height: 60px; }
+  .list.opener .card { border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+
+  .card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--artist, var(--line));
+    border-radius: var(--radius);
+    padding: 9px 10px;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  .card:hover { background: var(--card-hover); }
+  .num {
+    flex: 0 0 auto;
+    width: 26px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .opener .num { color: var(--accent); font-weight: 700; width: auto; }
+  .pool .num { display: none; }
+  .meta { flex: 1 1 auto; min-width: 0; }
+  .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .artist { font-size: 12px; color: var(--muted); }
+  .tag {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--accent);
+    margin-left: 6px;
+    vertical-align: 1px;
+    font-weight: 500;
+  }
+  .more {
+    flex: 0 0 auto;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 4px 8px;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .more:hover { color: var(--text); background: var(--line); }
+
+  .sortable-ghost { opacity: .35; }
+  .sortable-chosen { box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+  .sortable-drag { cursor: grabbing; }
+
+  .menu {
+    position: fixed;
+    z-index: 20;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    display: flex;
+    flex-direction: column;
+    min-width: 170px;
+  }
+  .menu button { border: none; background: transparent; text-align: left; padding: 8px 10px; }
+  .menu button:hover { background: var(--card); }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--text);
+    color: var(--bg);
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: 14px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s, transform .2s;
+    z-index: 30;
+    max-width: calc(100vw - 32px);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .hint { max-width: 1280px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>樂團排歌單<small>把卡片拖進上下半場；每個半場 1 首開場＋8–10 首</small></h1>
+  <div class="actions">
+    <button class="primary" id="btn-share">複製分享連結</button>
+    <button id="btn-text">複製歌單文字</button>
+    <button id="btn-reset">全部清空</button>
+  </div>
+</header>
+
+<div class="status" id="status"></div>
+
+<main>
+  <section class="col">
+    <h2>歌曲庫 <span class="count" id="count-pool"></span></h2>
+    <div class="list pool" id="pool" data-empty="全部歌都排進去了"></div>
+  </section>
+
+  <section class="col">
+    <h2>上半場 <span class="count" id="count-1"></span></h2>
+    <div class="label">開場曲</div>
+    <div class="list opener" id="o1" data-empty="拖一首歌到這裡當開場"></div>
+    <div class="label">曲目（8–10 首）</div>
+    <div class="list set" id="s1" data-empty="把歌拖進來"></div>
+  </section>
+
+  <section class="col">
+    <h2>下半場 <span class="count" id="count-2"></span></h2>
+    <div class="label">開場曲</div>
+    <div class="list opener" id="o2" data-empty="拖一首歌到這裡當開場"></div>
+    <div class="label">曲目（8–10 首）</div>
+    <div class="list set" id="s2" data-empty="把歌拖進來"></div>
+  </section>
+</main>
+
+<p class="hint">順序會自動存在網址裡：排好後按「複製分享連結」丟到群組，別人打開就是你排的版本，改完再傳回來就好。手機上長按卡片再拖曳，或點 ⋯ 直接選要放哪裡。</p>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<script>
+// ===== 歌曲清單：要加歌就在這裡加一行，id 不要重複、不要改舊的 id =====
+const SONGS = [
+  { id: 1,  title: "I'll Stick Around",         artist: "Foo Fighters" },
+  { id: 2,  title: "All My Life",               artist: "Foo Fighters" },
+  { id: 3,  title: "Monkey Wrench",             artist: "Foo Fighters" },
+  { id: 4,  title: "Stacked Actors",            artist: "Foo Fighters" },
+  { id: 5,  title: "Breakout",                  artist: "Foo Fighters" },
+  { id: 6,  title: "My Hero",                   artist: "Foo Fighters" },
+  { id: 7,  title: "Learn to Fly",              artist: "Foo Fighters" },
+  { id: 8,  title: "Everlong",                  artist: "Foo Fighters" },
+  { id: 9,  title: "Times Like These",          artist: "Foo Fighters" },
+  { id: 10, title: "Hey, Johnny Park!",         artist: "Foo Fighters" },
+  { id: 11, title: "Smells Like Teen Spirit",   artist: "Nirvana", tag: "小任" },
+  { id: 12, title: "Heart-Shaped Box",          artist: "Nirvana" },
+  { id: 13, title: "Lithium",                   artist: "Nirvana" },
+  { id: 14, title: "Breed",                     artist: "Nirvana" },
+  { id: 15, title: "Special K",                 artist: "Placebo" },
+  { id: 16, title: "The Kids Aren't Alright",   artist: "The Offspring" },
+  { id: 17, title: "Californication",           artist: "Red Hot Chili Peppers" },
+  { id: 18, title: "Don't Look Back in Anger",  artist: "Oasis" },
+  { id: 19, title: "重回往日時光",               artist: "",  tag: "金剛" },
+  { id: 20, title: "Killing in the Name",       artist: "Rage Against the Machine", tag: "小痞" },
+];
+const SET_MIN = 8, SET_MAX = 10;
+
+const ARTIST_COLORS = {
+  "Foo Fighters": "#e0524f",
+  "Nirvana": "#5b9cf0",
+  "Placebo": "#b07cf0",
+  "The Offspring": "#f09a3e",
+  "Red Hot Chili Peppers": "#e0609c",
+  "Oasis": "#4cc3b6",
+  "Rage Against the Machine": "#d6c64a",
+};
+
+const byId = new Map(SONGS.map(s => [s.id, s]));
+const LISTS = ["pool", "o1", "s1", "o2", "s2"];
+const STORE_KEY = "band-setlist-v1";
+
+// ---------- state ----------
+function emptyState() {
+  return { pool: SONGS.map(s => s.id), o1: [], s1: [], o2: [], s2: [] };
+}
+
+// 修正狀態：去重、丟掉不存在的歌、沒出現的歌放回歌曲庫、開場最多 1 首
+function normalize(raw) {
+  const seen = new Set();
+  const st = { pool: [], o1: [], s1: [], o2: [], s2: [] };
+  for (const k of ["o1", "s1", "o2", "s2", "pool"]) {
+    for (const id of raw[k] || []) {
+      if (byId.has(id) && !seen.has(id)) { seen.add(id); st[k].push(id); }
+    }
+  }
+  for (const k of ["o1", "o2"]) {
+    while (st[k].length > 1) st.pool.push(st[k].pop());
+  }
+  for (const s of SONGS) if (!seen.has(s.id)) st.pool.push(s.id);
+  return st;
+}
+
+function encode(st) {
+  const p = new URLSearchParams();
+  for (const k of ["o1", "s1", "o2", "s2"]) if (st[k].length) p.set(k, st[k].join("."));
+  return p.toString();
+}
+
+function decode(str) {
+  const p = new URLSearchParams(str);
+  const raw = {};
+  let any = false;
+  for (const k of ["o1", "s1", "o2", "s2"]) {
+    const v = p.get(k);
+    raw[k] = v ? v.split(".").map(Number).filter(Number.isFinite) : [];
+    if (v !== null) any = true;
+  }
+  return any ? raw : null;
+}
+
+function load() {
+  const fromHash = decode(location.hash.slice(1));
+  if (fromHash) return normalize(fromHash);
+  try {
+    const saved = localStorage.getItem(STORE_KEY);
+    if (saved) { const r = decode(saved); if (r) return normalize(r); }
+  } catch (e) {}
+  return emptyState();
+}
+
+let state = load();
+
+function save() {
+  const q = encode(state);
+  history.replaceState(null, "", q ? "#" + q : location.pathname + location.search);
+  try { localStorage.setItem(STORE_KEY, q); } catch (e) {}
+}
+
+// ---------- render ----------
+function cardEl(id, listKey, index) {
+  const s = byId.get(id);
+  const el = document.createElement("div");
+  el.className = "card";
+  el.dataset.id = id;
+  el.style.setProperty("--artist", ARTIST_COLORS[s.artist] || "var(--line)");
+  const num = listKey.startsWith("o") ? "開場" : String(index + 1);
+  el.innerHTML = `
+    <span class="num">${num}</span>
+    <div class="meta">
+      <div class="title"></div>
+      <div class="artist"></div>
+    </div>
+    <button class="more" type="button" aria-label="移動">⋯</button>`;
+  el.querySelector(".title").textContent = s.title;
+  if (s.tag) {
+    const t = document.createElement("span");
+    t.className = "tag";
+    t.textContent = s.tag;
+    el.querySelector(".title").appendChild(t);
+  }
+  el.querySelector(".artist").textContent = s.artist || " ";
+  el.querySelector(".more").addEventListener("click", e => {
+    e.stopPropagation();
+    openMenu(e.currentTarget, id);
+  });
+  return el;
+}
+
+function render() {
+  for (const k of LISTS) {
+    const box = document.getElementById(k);
+    box.replaceChildren(...state[k].map((id, i) => cardEl(id, k, i)));
+  }
+  renderStatus();
+}
+
+function halfOk(n) {
+  const c = state["s" + n].length;
+  return state["o" + n].length === 1 && c >= SET_MIN && c <= SET_MAX;
+}
+
+function renderStatus() {
+  document.getElementById("count-pool").textContent = `${state.pool.length} 首未排`;
+  for (const n of [1, 2]) {
+    const c = state["s" + n].length;
+    const el = document.getElementById("count-" + n);
+    el.textContent = `開場 ${state["o" + n].length}/1・曲目 ${c}/${SET_MIN}–${SET_MAX}`;
+    el.className = "count " + (halfOk(n) ? "ok" : (c > SET_MAX ? "bad" : ""));
+  }
+  const pills = [];
+  for (const n of [1, 2]) {
+    const name = n === 1 ? "上半場" : "下半場";
+    const c = state["s" + n].length;
+    if (halfOk(n)) pills.push(`<span class="pill ok">${name} ✓</span>`);
+    else {
+      const why = [];
+      if (!state["o" + n].length) why.push("缺開場");
+      if (c < SET_MIN) why.push(`還差 ${SET_MIN - c} 首`);
+      if (c > SET_MAX) why.push(`多了 ${c - SET_MAX} 首`);
+      pills.push(`<span class="pill ${c > SET_MAX ? "bad" : ""}">${name}：${why.join("、")}</span>`);
+    }
+  }
+  const total = LISTS.slice(1).reduce((a, k) => a + state[k].length, 0);
+  pills.push(`<span class="pill">總共 ${total} 首</span>`);
+  document.getElementById("status").innerHTML = pills.join("");
+}
+
+// ---------- drag & drop ----------
+function readDom() {
+  const st = {};
+  for (const k of LISTS) {
+    st[k] = [...document.getElementById(k).children].map(c => Number(c.dataset.id));
+  }
+  return st;
+}
+
+function commit() {
+  state = normalize(readDom());
+  save();
+  render();
+}
+
+for (const k of LISTS) {
+  const isOpener = k.startsWith("o");
+  Sortable.create(document.getElementById(k), {
+    group: "setlist",
+    animation: 150,
+    delay: 180,
+    delayOnTouchOnly: true,
+    filter: ".more",
+    preventOnFilter: false,
+    onAdd: isOpener ? evt => {
+      // 開場只能一首：原本的開場曲換回新歌原本的位置
+      const box = evt.to;
+      const old = [...box.children].find(c => c !== evt.item);
+      if (old) {
+        const ref = evt.from.children[evt.oldIndex] || null;
+        evt.from.insertBefore(old, ref);
+      }
+    } : undefined,
+    onEnd: commit,
+  });
+}
+
+// ---------- ⋯ menu (手機好用) ----------
+let menuEl = null;
+function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+
+function where(id) { return LISTS.find(k => state[k].includes(id)); }
+
+function moveTo(id, target) {
+  const from = where(id);
+  const st = structuredClone(state);
+  st[from] = st[from].filter(x => x !== id);
+  if (target.startsWith("o") && st[target].length) {
+    // 開場已有歌：換到新歌原本的地方
+    const idx = state[from].indexOf(id);
+    const old = st[target].pop();
+    st[from].splice(from === target ? 0 : idx, 0, old);
+  }
+  st[target].push(id);
+  state = normalize(st);
+  save();
+  render();
+}
+
+function openMenu(anchor, id) {
+  closeMenu();
+  const cur = where(id);
+  const opts = [
+    ["o1", "上半場・開場"],
+    ["s1", "上半場・加到最後"],
+    ["o2", "下半場・開場"],
+    ["s2", "下半場・加到最後"],
+    ["pool", "移回歌曲庫"],
+  ].filter(([k]) => k !== cur);
+  menuEl = document.createElement("div");
+  menuEl.className = "menu";
+  for (const [k, label] of opts) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", () => { closeMenu(); moveTo(id, k); });
+    menuEl.appendChild(b);
+  }
+  document.body.appendChild(menuEl);
+  const r = anchor.getBoundingClientRect();
+  const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  let top = r.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = r.top - mh - 4;
+  menuEl.style.left = Math.max(8, left) + "px";
+  menuEl.style.top = Math.max(8, top) + "px";
+}
+document.addEventListener("click", closeMenu);
+window.addEventListener("scroll", closeMenu, { passive: true });
+
+// ---------- buttons ----------
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("show"), 2000);
+}
+
+async function copy(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMsg);
+  } catch (e) {
+    window.prompt("複製下面這段：", text);
+  }
+}
+
+function setlistText() {
+  const lines = [];
+  for (const n of [1, 2]) {
+    lines.push(n === 1 ? "【上半場】" : "【下半場】");
+    const o = state["o" + n][0];
+    lines.push("開場：" + (o ? label(o) : "（未定）"));
+    state["s" + n].forEach((id, i) => lines.push(`${i + 1}. ${label(id)}`));
+    lines.push("");
+  }
+  if (state.pool.length) lines.push("未排：" + state.pool.map(label).join("、"));
+  return lines.join("\n").trim();
+}
+function label(id) {
+  const s = byId.get(id);
+  return s.title + (s.tag ? `（${s.tag}）` : "");
+}
+
+document.getElementById("btn-share").addEventListener("click", () => copy(location.href, "連結已複製，貼到群組就好"));
+document.getElementById("btn-text").addEventListener("click", () => copy(setlistText(), "歌單文字已複製"));
+document.getElementById("btn-reset").addEventListener("click", () => {
+  if (!confirm("確定把所有歌放回歌曲庫？")) return;
+  state = emptyState();
+  save();
+  render();
+});
+window.addEventListener("hashchange", () => { state = load(); save(); render(); });
+
+save();
+render();
+</script>
+</body>
+</html>
