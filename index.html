@@ -340,12 +340,23 @@
       <label class="field"><span>歌名</span><input type="text" id="add-title" autocomplete="off"></label>
       <label class="field"><span>歌手</span><input type="text" id="add-artist" autocomplete="off"></label>
     </div>
-    <label class="field"><span>標籤（選填，例如客串的人）</span><input type="text" id="add-tag" autocomplete="off"></label>
+    <label class="field"><span>標籤（選填，例如客串的人）</span><input type="text" id="add-tag" maxlength="12" autocomplete="off"></label>
     <div class="msg" id="add-msg"></div>
     <div class="dlg-actions">
       <button type="button" id="add-cancel">取消</button>
       <button type="button" class="primary" id="add-ok" disabled>加入歌曲庫</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="tag-dialog">
+  <h3>標籤</h3>
+  <p class="muted">「<b id="tag-name"></b>」的標籤，例如客串的人或備註（最多 12 個字）</p>
+  <label class="field"><input type="text" id="tag-input" maxlength="12" autocomplete="off" placeholder="例如：小任"></label>
+  <div class="dlg-actions">
+    <button type="button" id="tag-clear" style="margin-right:auto">拿掉標籤</button>
+    <button type="button" id="tag-cancel">取消</button>
+    <button type="button" class="primary" id="tag-ok">儲存</button>
   </div>
 </dialog>
 
@@ -421,15 +432,19 @@ const SET_KEYS = ["o1", "s1", "o2", "s2", "e"];   // 會編進存檔字串的清
 const STORE_KEY = "band-setlist-v1";
 
 // ---------- state ----------
-// state = { pool, o1, s1, o2, s2, custom: [{id,title,artist,tag}], deleted: [內建歌 id] }
+// state = { pool, o1, s1, o2, s2, custom: [{id,title,artist,tag}], deleted: [內建歌 id],
+//           tags: {內建歌 id: 網頁上改過的標籤（"" = 拿掉）} }
 let state;
+const TAG_MAX = 12;
 
 function catalog(st = state) {
   const del = new Set(st.deleted);
   return [...BASE_SONGS.filter(s => !del.has(s.id)), ...st.custom];
 }
 function song(id) {
-  return BASE_SONGS.find(s => s.id === id) || state.custom.find(s => s.id === id);
+  const base = BASE_SONGS.find(s => s.id === id);
+  if (base) return id in state.tags ? { ...base, tag: state.tags[id] } : base;
+  return state.custom.find(s => s.id === id);
 }
 
 // 修正狀態：去重、丟掉不存在的歌、沒出現的歌放回歌曲庫、開場最多 1 首
@@ -447,7 +462,15 @@ function normalize(raw) {
     });
   }
   const deleted = [...new Set((raw.deleted || []).filter(id => BASE_SONGS.some(s => s.id === id)))];
-  const st = { pool: [], o1: [], s1: [], o2: [], s2: [], e: [], custom, deleted };
+  // 內建歌的標籤只記「跟原本不一樣」的
+  const tags = {};
+  for (const [k, v] of Object.entries(raw.tags || {})) {
+    const base = BASE_SONGS.find(s => s.id === Number(k));
+    if (!base || typeof v !== "string") continue;
+    const t = v.trim().slice(0, TAG_MAX);
+    if (t !== (base.tag || "")) tags[base.id] = t;
+  }
+  const st = { pool: [], o1: [], s1: [], o2: [], s2: [], e: [], custom, deleted, tags };
   const valid = new Set(catalog(st).map(s => s.id));
   const seen = new Set();
   for (const k of [...SET_KEYS, "pool"]) {
@@ -474,12 +497,13 @@ function encode(st) {
       c.tag ? [c.id, c.title, c.artist, c.tag] : [c.id, c.title, c.artist])));
   }
   if (st.deleted.length) p.set("d", st.deleted.join("."));
+  if (Object.keys(st.tags).length) p.set("g", JSON.stringify(st.tags));
   return p.toString();
 }
 
 function decode(str) {
   const p = new URLSearchParams(str);
-  if (![...SET_KEYS, "c", "d"].some(k => p.has(k))) return null;
+  if (![...SET_KEYS, "c", "d", "g"].some(k => p.has(k))) return null;
   const nums = v => v ? v.split(".").map(Number).filter(Number.isInteger) : [];
   const raw = { deleted: nums(p.get("d")), custom: [] };
   for (const k of SET_KEYS) raw[k] = nums(p.get(k));
@@ -488,6 +512,10 @@ function decode(str) {
     if (Array.isArray(arr)) {
       raw.custom = arr.filter(Array.isArray).map(([id, title, artist, tag]) => ({ id, title, artist, tag }));
     }
+  } catch (e) {}
+  try {
+    const g = JSON.parse(p.get("g") || "{}");
+    if (g && typeof g === "object" && !Array.isArray(g)) raw.tags = g;
   } catch (e) {}
   return raw;
 }
@@ -667,7 +695,7 @@ function flash(id) {
 
 // ---------- drag & drop ----------
 function readDom() {
-  const st = { custom: state.custom, deleted: state.deleted };
+  const st = { custom: state.custom, deleted: state.deleted, tags: state.tags };
   for (const k of LISTS) {
     st[k] = [...$(k).children].map(c => Number(c.dataset.id));
   }
@@ -747,6 +775,8 @@ function openMenu(anchor, id) {
     ["pool", "移回歌曲庫"],
   ].filter(([k]) => k !== cur);
   for (const [k, label] of opts) addItem(label, () => moveTo(id, k));
+  menuEl.appendChild(document.createElement("hr"));
+  addItem(song(id).tag ? "修改標籤…" : "加入標籤…", () => askTag(id));
   // 刪除刻意只放在歌曲庫的卡片裡，排進場次的歌要先移回歌曲庫才刪得掉
   if (cur === "pool") {
     menuEl.appendChild(document.createElement("hr"));
@@ -763,6 +793,39 @@ function openMenu(anchor, id) {
 }
 document.addEventListener("click", closeMenu);
 window.addEventListener("scroll", closeMenu, { passive: true });
+
+// ---------- 標籤 ----------
+let pendingTag = null;
+
+function askTag(id) {
+  pendingTag = id;
+  const s = song(id);
+  $("tag-name").textContent = s.title;
+  $("tag-input").value = s.tag || "";
+  $("tag-clear").hidden = !s.tag;
+  $("tag-dialog").showModal();
+  $("tag-input").focus();
+  $("tag-input").select();
+}
+
+function saveTag(tag) {
+  $("tag-dialog").close();
+  const id = pendingTag;
+  if (id == null || !song(id)) return;   // 等輸入的時候被別人刪掉了
+  tag = tag.trim().slice(0, TAG_MAX);
+  const st = structuredClone(state);
+  if (id < CUSTOM_ID_START) st.tags[id] = tag;
+  else st.custom.find(c => c.id === id).tag = tag;
+  update(st);
+  flash(id);
+}
+
+$("tag-cancel").addEventListener("click", () => $("tag-dialog").close());
+$("tag-ok").addEventListener("click", () => saveTag($("tag-input").value));
+$("tag-clear").addEventListener("click", () => saveTag(""));
+$("tag-input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); saveTag($("tag-input").value); }
+});
 
 // ---------- 刪除 ----------
 let pendingDelete = null;
@@ -999,7 +1062,7 @@ $("btn-share").addEventListener("click", () => copy(location.origin + location.p
 $("btn-text").addEventListener("click", () => copy(setlistText(), "歌單文字已複製"));
 $("btn-reset").addEventListener("click", () => {
   if (!confirm("確定把所有歌放回歌曲庫？（新增的歌會保留）")) return;
-  update({ custom: state.custom, deleted: state.deleted });
+  update({ custom: state.custom, deleted: state.deleted, tags: state.tags });
 });
 // 頁面開著時又貼了舊版分享連結：重新載入，走一次「要不要套用」的流程
 window.addEventListener("hashchange", () => { if (decode(location.hash.slice(1))) location.reload(); });
